@@ -2,9 +2,26 @@
 
 import abc
 import enum
+import json
+import os
 from litellm import completion
 
 from typing import Optional, List, Dict, Any, Union
+
+
+def _user_llm_kwargs() -> Dict[str, Any]:
+    """[reverie fork] Extra litellm kwargs for the user-sim (e.g. temperature, reasoning_effort), read
+    from the TAU1_USER_LLM_ARGS env var (JSON dict). Stock tau-bench passes NO sampling params, so a
+    thinking user-sim (e.g. Gemini) reasons unbounded; this lets the trainer cap it (reasoning_effort=
+    "low"), mirroring tau2's TAU2_USER_LLM_ARGS. Returns {} when unset/invalid."""
+    raw = os.environ.get("TAU1_USER_LLM_ARGS")
+    if not raw:
+        return {}
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
 
 
 class BaseUserSimulationEnv(abc.ABC):
@@ -45,7 +62,8 @@ class LLMUserSimulationEnv(BaseUserSimulationEnv):
 
     def generate_next_message(self, messages: List[Dict[str, Any]]) -> str:
         res = completion(
-            model=self.model, custom_llm_provider=self.provider, messages=messages
+            model=self.model, custom_llm_provider=self.provider, messages=messages,
+            **_user_llm_kwargs(),
         )
         message = res.choices[0].message
         self.messages.append(message.model_dump())
@@ -116,7 +134,8 @@ User Response:
 
     def generate_next_message(self, messages: List[Dict[str, Any]]) -> str:
         res = completion(
-            model=self.model, custom_llm_provider=self.provider, messages=messages
+            model=self.model, custom_llm_provider=self.provider, messages=messages,
+            **_user_llm_kwargs(),
         )
         message = res.choices[0].message
         self.messages.append(message.model_dump())
@@ -165,7 +184,8 @@ class VerifyUserSimulationEnv(LLMUserSimulationEnv):
         cur_message = None
         while attempts < self.max_attempts:
             res = completion(
-                model=self.model, custom_llm_provider=self.provider, messages=messages
+                model=self.model, custom_llm_provider=self.provider, messages=messages,
+                **_user_llm_kwargs(),
             )
             cur_message = res.choices[0].message
             self.total_cost = res._hidden_params["response_cost"]
@@ -228,6 +248,7 @@ Classification:"""
         model=model,
         custom_llm_provider=provider,
         messages=[{"role": "user", "content": prompt}],
+        **_user_llm_kwargs(),
     )
     return "true" in res.choices[0].message.content.lower()
 
@@ -262,6 +283,7 @@ Response:
         model=model,
         custom_llm_provider=provider,
         messages=[{"role": "user", "content": prompt}],
+        **_user_llm_kwargs(),
     )
     _, response = res.choices[0].message.content.split("Response:")
     return response.strip()
